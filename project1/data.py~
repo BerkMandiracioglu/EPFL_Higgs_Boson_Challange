@@ -1,0 +1,370 @@
+# Useful starting lines
+%matplotlib inline
+import numpy as np
+'''ONLY FOR VISUALIZATION'''
+import pandas as pd 
+import matplotlib.pyplot as plt
+%load_ext autoreload
+%autoreload 2
+from proj1_helpers import *
+#Modify DATA_PATH if needed
+DATA_TRAIN_PATH = '../../data_project1/train.csv'
+y, tX_old, ids = load_csv_data(DATA_TRAIN_PATH)
+
+'''DATASET INTRINSICS AND SHAPE (TARGETS AND IDS INCLUDED)'''
+def DataSetInfo(y, tX_old, ids):
+    print("Training examples: ", tX_old, " & shape: ")
+    print("Targets: ", y)
+    print("Ids: ",ids)
+    print("Shapes of tX, y & Ids: ", tX_old.shape, y.shape, ids.shape)
+
+'''INITIALIZE WEIGHTS WITH RANDOM VALUES'''
+def InitWeights(feat):
+    ww = np.random.rand(feat)
+    #ww = np.zeros((feat))
+    init_w = np.array(ww, dtype=np.float64)
+    return init_w
+
+'''HYPER PARAMETERS'''
+def HyperParameters():
+    max_iter = 800
+    epochs = 5
+    gamma = 1e-2
+    lambda_ = 1e-1
+    decay = 1e-2
+    k_fold = 10
+    return max_iter, epochs, gamma, lambda_, decay, k_fold
+
+'''DECREASE LEARNING RATE AT EVERY EPOCH'''
+def GammaScheduler(gamma, decay, epoch):
+    gamma = gamma * (1/(1 + decay * epoch))
+    return gamma
+
+'''TAKE LOG TRANSFORMATION OF FEATURES'''
+def LogTransformData(tX, features):  
+    data = tX[:, features]
+    indices = np.where(data > -999)
+    data[indices] = np.log(1 + data[indices])
+    tX = ManipulateFeatures(tX, data, features)    
+    return tX
+
+'''DELETE GIVEN FEATURE VECTOR FROM FEATURE AND CONCETENATE WITH NEW DATA '''
+def ManipulateFeatures(tX, data,features):
+    tX = np.delete(tX, features, 1)
+    return np.hstack((tX, data))
+
+'''IMPUTE DATA WITH MEANS'''
+def ImputeData(tX):
+    tX = np.where(tX == -999, np.nan, tX)
+    #Remove all columns with NAN
+    tX = tX[:, ~np.all(np.isnan(tX), axis=0)]
+    #Remove highly correlated features
+    tX = tX[:, ~np.all(tX[1:] == tX[:-1], axis=0)]
+    #Find Mean excluding NAN values
+    tX_mean = np.nanmean(tX, axis=0)
+    # NAN = MEAN
+    tX[np.where(np.isnan(tX))] = np.take(tX_mean, np.where(np.isnan(tX))[1])
+    print(tX.shape)
+    return tX
+
+'''STANDARDIZE'''
+def Standardize(tX):
+    mean_x = np.mean(tX, axis=0)
+    tX = tX - mean_x
+    std_x = np.std(tX, axis=0)
+    tX[:, std_x > 0] = tX[:, std_x > 0] / std_x[std_x > 0]
+    return tX, mean_x, std_x
+
+'''PREPROCESS'''
+def PreProcess(tX, rr_ = True):
+    '''FEATURES PICKED BY HAND FOR LOG TRANSFORM'''
+    log_feature_vec = np.array(([0, 2, 5, 9, 13, 16, 19, 21, 23, 26, 29]))
+    tX = LogTransformData(tX, log_feature_vec)
+    print(tX.shape)
+    tX = ImputeData(tX)
+    if rr_:
+        tX = Standardize(tX)[0]
+        tX = AddFeatures(tX)
+    else:
+        tX = AddFeatures(tX)
+        tX = Standardize(tX)[0]
+    return tX
+
+'''DATASET SEPERATED IN TERMS OF CATEGORIES IN COLUMN 22'''
+def Categorize_Train(y, tX, ids):
+    '''CATEGORY 2 AND 3 CONCETENATED'''
+    ind = [[] for j in range(3)]
+    xx = [[] for j in range(3)]
+    yy = [[] for j in range(3)]
+    iids = [[] for j in range(3)]
+    
+    for i in range(3): 
+        ind[i] = np.nonzero(tX[:, 22] == i)[0]
+        if i == 2:
+            ind[i] = np.hstack((ind[i], np.nonzero(tX[:, 22] == (i+1))[0].T))       
+        xx[i] = tX[ind[i]]
+        yy[i] = y[ind[i]]
+        iids[i] = ids[ind[i]]
+        
+    return np.array((yy)), np.array((xx)), np.array((iids)), np.array((ind))
+
+'''CATEGORIZE TEST'''
+def Categorize_Test(tX, ids):
+    '''CATEGORY 2 AND 3 CONCETENATED'''
+    ind = [[] for j in range(3)]
+    xx = [[] for j in range(3)]
+    iids = [[] for j in range(3)]
+    
+    for i in range(3): 
+        ind[i] = np.nonzero(tX[:, 22] == i)[0]
+        if i == 2:
+            ind[i] = np.hstack((ind[i], np.nonzero(tX[:, 22] == (i+1))[0].T))   
+        xx[i] = tX[ind[i]]
+        iids[i] = ids[ind[i]]
+        
+    return np.array((xx)), np.array((iids)), np.array((ind))
+
+'''PREDICTIONS INTO COMPARABLE FORM'''
+def Decategorize(y_cat, ind):
+    size = y_cat[0].shape[0] + y_cat[1].shape[0] + y_cat[2].shape[0]
+    y = np.zeros((size,), dtype=np.float)
+    for i in range(len(y_cat)):
+        y[ind[i]] = y_cat[i]
+    return y
+
+'''CHECK VALIDATION SCORE'''
+def WeightedAverage(pred, target):
+    total_count = pred[0].shape[0] + pred[1].shape[0] + pred[2].shape[0]
+    true_count = 0
+    for i in range(3):
+        true_count +=  np.sum(pred[i] == target[i])
+    acc = true_count / total_count
+    return acc
+'''FEATURE CORRELATION MAP: ONLY FOR VISUALIZATION'''
+'''CORRELATED FEATURES: CORR > THRESHOLD : USE FOR SYNTHESIS'''
+def CorrMap(tX):
+    df = pd.DataFrame(tX)
+    corr = df.corr()
+    return corr.style.background_gradient(cmap='coolwarm')
+
+'''RANDOM DATA SPLIT'''
+def RandomizedDataSplit(tX, y, ids, inds, split_size = 0.1, my_seed=1):
+    '''SET SEED FOR REMOVING RANDOMNESS'''
+    #np.random.seed(my_seed)
+    '''RANDOM INDEXES'''
+    size = y.shape[0]
+    ind = np.random.permutation(size)
+    split = int(np.floor(split_size * size))
+    
+    ind_train = ind[split:]
+    ind_valid = ind[:split]
+    
+    
+    '''SPLIT DATA ACCORDING TO RANDOM INDICES'''
+    tX_train = tX[ind_train]
+    tX_valid = tX[ind_valid]
+    y_train = y[ind_train]
+    y_valid = y[ind_valid]
+    ids_train = ids[ind_train]
+    ids_valid = ids[ind_valid]
+    inds_train = inds[ind_train]
+    inds_valid = inds[ind_valid]
+    
+    print("Shapes of tX, y, Ids & Indices for Training: ", tX_train.shape, y_train.shape, ids_train.shape, inds_train.shape)
+    print("Shapes of tX, y, Ids & Indices for Validation: ", tX_valid.shape, y_valid.shape, ids_valid.shape, inds_valid.shape)
+    return (tX_train, y_train, ids_train, inds_train),(tX_valid, y_valid, ids_valid, inds_valid)
+
+'''BACKWARD SELECTION METHOD FOR BEST FEATURE SELECTION: GREEDY APPROACH'''
+def BackwardSelection(y, tX, tX_valid, y_valid, model = "RR"):
+    
+    selected_features = []
+    cur_best_acc = 0
+    improved = True     
+    while improved:
+        improved = False
+        worst_ft = -1 
+        for i in range(tX.shape[1]):
+            if i not in selected_features:
+                
+                diff = set(list(range(tX.shape[1]))) - set(selected_features + [i])            
+                #calculate accuracy
+                #print(tX[:,list(diff)].shape,y.shape)
+                
+                cur_acc = CrossValidation(y, tX[:,list(diff)],10)
+                #print(cur_acc)
+                #accuracy is improved
+                if cur_best_acc <= cur_acc:
+                    #print("best so far: ",cur_best_acc)
+                    improved = True
+                    cur_best_acc = cur_acc
+                    worst_ft = i                    
+        if improved:
+            selected_features.append(worst_ft)  
+        #print("burada",improved)
+            
+    return list(set(list(range(tX.shape[1]))) - set(selected_features )), cur_best_acc
+
+'''FORWARD OF BACKWARD SELECTION'''
+def Selection(y, tX, tX_valid, y_valid, typ = "BS", model = "RR"):
+    if typ == "BS":
+        selected_features, cur_best_acc = BackwardSelection(y, tX, tX_valid, y_valid,model)
+        return selected_features, cur_best_acc
+    elif typ == "FS":
+        selected_features, cur_best_acc = ForwardSelection(y, tX, tX_valid, y_valid,model) 
+        return selected_features, cur_best_acc
+    
+'''FORWARD SELECTION METHOD FOR BEST FEATURE SELECTION: GREEDY APPROACH'''
+def ForwardSelection(y, tX, tX_valid, y_valid, model = "RR"):    
+    selected_features = []
+    cur_best_acc = 0  
+    improved = True
+    while improved:
+        
+        improved = False
+        best_ft = -1 
+        for i in range(tX.shape[1]):
+            if i not in selected_features: 
+                #calculate accuracy             
+                cur_acc = CrossValidation(y, tX[:,selected_features+[i]],5)
+                #print(cur_acc)
+                #accuracy is improved
+                if cur_best_acc <= cur_acc:
+                    improved = True                   
+                    cur_best_acc = cur_acc
+                    best_ft = i                 
+                    
+        if improved:
+            selected_features.append(best_ft)
+            #print(selected_features)
+         
+    return selected_features, cur_best_acc
+
+'''ADD NEW FUTURES'''
+def AddFeatures(tX):
+    prime_numbers = [2,3]
+    #ADD COS / SIN , SQRT 
+    #CHECK FEATURE SYNTHESIS
+    pm = 0
+    loop_count = tX.shape[1]
+    for i in range(loop_count):
+            tX = np.hstack((tX, np.cos(tX[:,i]).reshape(-1,1)))
+    for i in range(loop_count):
+            tX = np.hstack((tX, np.sin(tX[:,i]).reshape(-1,1)))
+                
+    for pm in range(len(prime_numbers)):
+        for i in range(3*loop_count):
+            tX = np.hstack((tX, np.power(tX[:,i], prime_numbers[pm]).reshape(-1,1)))
+    
+    return tX
+
+'''CROSS VALIDATION HELPER FUNCTION'''
+def SelectIndices(y, k_fold, seed):
+    row_count = y.shape[0]
+    window_size = int((row_count / k_fold))
+    remainder = row_count % k_fold
+    '''SEED IN TERMS OF SHUFFLING ONLY ONCE'''
+    np.random.seed(seed)
+    rand_indices = np.random.permutation(row_count)
+    indices = [[] for i in range(k_fold)]
+    
+    for k in range(k_fold):
+        
+            indices[k] = np.array((rand_indices[k*window_size:(k+1)*window_size]))
+            
+    return np.array(indices)
+'''CROSS VALIDATION'''
+def CrossValidation(y, tX, k, cat_, lambda_):
+    seed = np.random.randint(10)
+    indices = SelectIndices(y,k,seed)
+    average_acc = 0
+    w_vec = list()
+    
+    for i in range (k): 
+        tr_indices = list()
+        count = 1
+        for tr_ in range(len(indices)):
+            if i != tr_:
+                if count == 1:
+                    tr_indices = np.array((indices[tr_]))
+                    count += 1
+                else:
+                    tr_indices = np.hstack((tr_indices, indices[tr_]))
+                
+        #print(tr_indices)
+        valid_indices = indices[i]   
+        xk_train = tX[tr_indices]
+        xk_valid = tX[valid_indices]
+        yk_train = y[tr_indices]
+        yk_valid = y[valid_indices]
+        #print(yk_train.shape,xk_train.shape)
+        #print(xk_valid.shape)
+        init_w_gd = np.array((InitWeights(xk_train.shape[1])))
+        (w,loss) = ridge_regression(yk_train, xk_train, lambda_)
+        ls_tr_pred = predict_labels(w, xk_valid)
+        average_acc += (ls_tr_pred == yk_valid).mean()/k
+        w_vec.append(w)
+        
+    print("Cross Validation Accuracy for Category ",cat_,": ",average_acc)
+    w_final = w_vec[0]
+    for weight in range(1,len(w_vec)):
+        w_final += w_vec[weight]
+    w_final = w_final / len(w_vec)
+    
+    return w_final, average_acc
+    
+'''BUILD FULL DATA MODEL WITH CATEGORIZATION'''
+def BuildDataModel_Train(y, tX_old, ids):
+    y_cat, tX_cat, id_cat, ind_cat = Categorize_Train(y, tX_old, ids)  
+    for cat_ in range(tX_cat.shape[0]):
+        tX_cat[cat_] = PreProcess(tX_cat[cat_], False)  
+         
+    '''TRAIN SET'''
+    tX_tr_cat = [[] for j in range(3)]
+    y_tr_cat = [[] for j in range(3)]
+    id_tr_cat = [[] for j in range(3)]
+    ind_tr_cat = [[] for j in range(3)]
+
+    '''VALID SET'''
+    tX_val_cat = [[] for j in range(3)]
+    y_val_cat = [[] for j in range(3)]
+    id_val_cat = [[] for j in range(3)]
+    ind_val_cat = [[] for j in range(3)]
+
+    for i in range(len(tX_cat)):
+        (tX_tr_cat[i], y_tr_cat[i],id_tr_cat[i],ind_tr_cat[i]), (tX_val_cat[i], y_val_cat[i],id_val_cat[i], ind_val_cat[i]) = RandomizedDataSplit(tX_cat[i], y_cat[i], id_cat[i], ind_cat[i])
+
+    '''CONVERT TRAIN AND DATASET INTO NUMPY ARRAYS'''
+    tX_tr_cat = np.array((tX_tr_cat))
+    y_tr_cat = np.array((y_tr_cat))
+    id_tr_cat = np.array((id_tr_cat))
+    ind_tr_cat = np.array((ind_tr_cat))
+
+    tX_val_cat = np.array((tX_val_cat))
+    y_val_cat = np.array((y_val_cat))
+    id_val_cat = np.array((id_val_cat))
+    ind_val_cat = np.array((ind_val_cat))
+
+    return (y_tr_cat, tX_tr_cat, id_tr_cat, ind_tr_cat), (y_val_cat, tX_val_cat, id_val_cat, ind_val_cat)
+
+'''CROSS VALIDATION DATA MODEL'''
+def BuildDataModel_CV(y, tX_old, ids):
+    y_cat, tX_cat, id_cat, ind_cat = Categorize_Train(y, tX_old, ids)
+    
+    for cat_ in range(tX_cat.shape[0]): 
+        tX_cat[cat_] = PreProcess(tX_cat[cat_], True)
+        
+    return y_cat, tX_cat, id_cat, ind_cat
+
+'''BUILD FULL DATA MODEL WITH CATEGORIZATION'''
+def BuildDataModel_Test(tX_old, ids):
+    tX_cat, id_cat, ind_cat = Categorize_Test(tX_old, ids)
+    
+    for cat_ in range(tX_cat.shape[0]):
+        tX_cat[cat_] = PreProcess(tX_cat[cat_])
+        
+    '''CONVERT TRAIN AND DATASET INTO NUMPY ARRAYS'''
+    tX_cat = np.array((tX_cat))
+    id_cat = np.array((id_cat))
+    ind_cat = np.array((ind_cat))
+    
+    return tX_cat, id_cat, ind_cat
