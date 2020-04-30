@@ -1,9 +1,10 @@
 MEMORY LEAK: HIGGS BOSON CHALLENGE:
-*Baris Sevilmis: baris.sevilmis@epfl.ch
 
-*Berk Mandiracioglu: berk.mandiracioglu@epfl.ch
+Baris Sevilmis: baris.sevilmis@epfl.ch
 
-*Onur Veyisoglu: onur.veyisoglu@epfl.ch
+Berk Mandiracioglu: berk.mandiracioglu@epfl.ch
+
+Onur Veyisoglu: onur.veyisoglu@epfl.ch
 Submission ID: 23430 - Ridge Regression
 
 IMPLEMENTATION.PY
